@@ -68,7 +68,7 @@ public:
   double lambda_;
 
   // Threshold to avoid divide by zero
-  double epsilon_;
+  double nearZero_ = 0.001;
 
   ///* NIS for lidar and radar
   double NIS_lidar_;
@@ -114,6 +114,8 @@ public:
    * Normalize angle betwee -PI to PI
    */
   double NormalizeAngle(double angle);
+
+  MatrixXd CreateSignmaPoints(VectorXd state, MatrixXd P, int state_size, int num_sig);
 };
 
 #endif /* UKF_H */

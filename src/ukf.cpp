@@ -1,6 +1,6 @@
-#include "ukf.h"
 #include "Eigen/Dense"
 #include <iostream>
+#include "ukf.h"
 
 using namespace std;
 using Eigen::MatrixXd;
@@ -25,10 +25,10 @@ UKF::UKF() {
   P_ = MatrixXd(5, 5);
 
   // Process noise standard deviation longitudinal acceleration in m/s^2
-  std_a_ = 2.5;
+  std_a_ = 3;
 
   // Process noise standard deviation yaw acceleration in rad/s^2
-  std_yawdd_ = 0.5;
+  std_yawdd_ = 1.5;
   
   //DO NOT MODIFY measurement noise values below these are provided by the sensor manufacturer.
   // Laser measurement noise standard deviation position1 in m
@@ -64,19 +64,13 @@ UKF::UKF() {
         0, 0, 1, 0, 0,
         0, 0, 0, 1, 0,
         0, 0, 0, 0, 1;
-
   n_x_ = 5;
-
   n_aug_ = 7;
-
   lambda_ = 3 - n_x_;
-
   weights_ = VectorXd( 2*n_aug_+1 );
   weights_(0) = lambda_/( lambda_ + n_aug_ );
   for( int i=1; i<2*n_aug_+1; i++ )
      weights_(i) = 0.5/( n_aug_ + lambda_ );
-
-  epsilon_ = 0.001;
 }
 
 UKF::~UKF() {}
@@ -97,7 +91,7 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
 
     if( meas_package.sensor_type_ == MeasurementPackage::LASER && use_laser_)
     {
-      x_(0) = meas_package.raw_measurements_[0];
+      x_(0) =  meas_package.raw_measurements_[0];
       x_(1) = meas_package.raw_measurements_[1];
     }
     else if(meas_package.sensor_type_ == MeasurementPackage::RADAR && use_radar_)
@@ -105,13 +99,9 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
       float rho = meas_package.raw_measurements_[0];
       float phi = meas_package.raw_measurements_[1];
       float rho_dot = meas_package.raw_measurements_[2];
-      double vx = rho_dot * cos(phi);
-      double vy = rho_dot * sin(phi);
       x_(0) = rho * cos(phi);
       x_(1) = rho * sin(phi);
-      x_(2) = sqrt(vx * vx + vy * vy);
     }
-
     is_initialized_ = true;
     time_us_ = meas_package.timestamp_;
     return;
@@ -121,6 +111,7 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
 
   // Check the time delta
   float dt = (meas_package.timestamp_ - time_us_) / 1000000.0; // in seconds
+  time_us_ = meas_package.timestamp_;
 
   // Run prediction step
   Prediction(dt);
@@ -158,8 +149,6 @@ void UKF::Prediction(double delta_t) {
   x_aug(5) = 0;
   x_aug(6) = 0;
 
-  cout << "Prediction: Generated Augmented stated vector" << endl;
-
   // Augmented State covariance matrix
   MatrixXd P_aug = MatrixXd(n_aug_, n_aug_);
   P_aug.fill(0.0);
@@ -167,19 +156,9 @@ void UKF::Prediction(double delta_t) {
   P_aug(5,5) = std_a_*std_a_;
   P_aug(6,6) = std_yawdd_*std_yawdd_;
 
-  cout << "Augmented State covariance matrix" << endl;
 
   // Sigma point matrix for augmented state vector
-  MatrixXd Xsig_aug = MatrixXd(n_aug_, 2 * n_aug_ + 1);
-  MatrixXd L = P_aug.llt().matrixL();
-  Xsig_aug.col(0) = x_aug;
-  double lambda_n_x_sqrt = sqrt(lambda_ + n_x_);
-  for (int i = 0; i < n_aug_; i++){
-    Xsig_aug.col( i + 1 ) = x_aug + lambda_n_x_sqrt * L.col(i);
-    Xsig_aug.col( i + 1 + n_aug_ ) = x_aug - lambda_n_x_sqrt * L.col(i);
-  }
-
-  cout << "Prediction: Generated Sigma point matrix for augmented state vector" << endl;
+  MatrixXd Xsig_aug = CreateSignmaPoints(x_aug, P_aug, n_aug_, 2 * n_aug_ + 1);
 
   // ------------------ Predict Sigma points -------------
 
@@ -196,9 +175,8 @@ void UKF::Prediction(double delta_t) {
 
     //predicted state values
     double px_p, py_p;
-
     //avoid division by zero
-    if (fabs(yawd) > epsilon_) {
+    if (fabs(yawd) > nearZero_) {
         px_p = p_x + v/yawd * ( sin (yaw + yawd*delta_t) - sin(yaw));
         py_p = p_y + v/yawd * ( cos(yaw) - cos(yaw+yawd*delta_t) );
     }
@@ -206,7 +184,6 @@ void UKF::Prediction(double delta_t) {
         px_p = p_x + v*delta_t*cos(yaw);
         py_p = p_y + v*delta_t*sin(yaw);
     }
-
     double v_p = v;
     double yaw_p = yaw + yawd*delta_t;
     double yawd_p = yawd;
@@ -215,7 +192,6 @@ void UKF::Prediction(double delta_t) {
     px_p = px_p + 0.5*nu_a*delta_t*delta_t * cos(yaw);
     py_p = py_p + 0.5*nu_a*delta_t*delta_t * sin(yaw);
     v_p = v_p + nu_a*delta_t;
-
     yaw_p = yaw_p + 0.5*nu_yawdd*delta_t*delta_t;
     yawd_p = yawd_p + nu_yawdd*delta_t;
 
@@ -225,17 +201,11 @@ void UKF::Prediction(double delta_t) {
     Xsig_pred_(2,i) = v_p;
     Xsig_pred_(3,i) = yaw_p;
     Xsig_pred_(4,i) = yawd_p;
-
   }
-
-  // cout << "Prediction: Predicted Sigma points" << Xsig_pred_ << endl;
 
   // Sigma points to mean state conversion
   x_.fill(0.0);
   x_ = Xsig_pred_ * weights_;
-
-  cout << "Prediction: Predicted mean state" << x_ << endl;
-
   // State covariance matrix from sigma points
   P_.fill(0.0);
   for (int i = 0; i < 2 * n_aug_ + 1; i++) {
@@ -314,6 +284,7 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
 
    //NIS
    NIS_lidar_ = z_diff.transpose() * S.inverse() * z_diff;
+   cout << "================= NIS_lidar_: " << NIS_lidar_ << "================= " << endl;
 }
 
 /**
@@ -401,20 +372,27 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
 
    //NIS
    NIS_radar_ = z_diff.transpose() * S.inverse() * z_diff;
-
+   cout << "================= NIS_radar_: " << NIS_radar_ << "================= " << endl;
 }
 
 double UKF::NormalizeAngle(double phi) {
-  cout << "Normalize angle: " << phi << endl;
-//  long two_pi = 2 * M_PI;
-//  long to_add = (phi < 0 ? two_pi : -two_pi);
-//  while (fabs(phi) > M_PI) {
-//    phi += to_add;
-//  }
-//  return phi;
-
-  while (phi> M_PI) phi-=2.*M_PI;
-  while (phi<-M_PI) phi+=2.*M_PI;
-  cout << "End Normalized angle: " << phi << endl;
+  // cout << "Normalize angle: " << phi << endl;
+  long two_pi = 2 * M_PI;
+  long to_add = (phi < 0 ? two_pi : -two_pi);
+  while (fabs(phi) > M_PI) {
+    phi += to_add;
+  }
+  // cout << "End Normalized angle: " << phi << endl;
   return phi;
+}
+
+MatrixXd UKF::CreateSignmaPoints(VectorXd state, MatrixXd P, int state_size, int num_sig) {
+    MatrixXd Xsig = MatrixXd( state_size, num_sig );
+    MatrixXd L = P.llt().matrixL();
+    Xsig.col(0) = state;
+    for (int i = 0; i < state_size; i++){
+        Xsig.col( i + 1 ) = state + sqrt(lambda_ + state_size) * L.col(i);
+        Xsig.col( i + 1 + state_size ) = state - sqrt(lambda_ + state_size) * L.col(i);
+    }
+    return Xsig;
 }
